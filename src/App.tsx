@@ -1,110 +1,194 @@
-import { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { supabase } from './supabaseClient';
-import { Shield, AlertTriangle, CheckCircle, Radio, Users, MapPin } from 'lucide-react';
-
-interface Satgas {
-  id: number;
-  nama_satgas: string;
-  pimpinan: string;
-  jumlah_anggota: number;
-  status: 'Aman' | 'Siaga' | 'Patroli' | 'Darurat';
-  lokasi_nama: string;
-}
+import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import { PieChart, Pie, Cell, LineChart, Line, XAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import { LayoutDashboard, Map as MapIcon, FileText, Users, Bell, Radio, Settings, ShieldAlert } from 'lucide-react';
 
 export default function App() {
-  const [dataSatgas, setDataSatgas] = useState<Satgas[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [satgas, setSatgas] = useState<any[]>([]);
+  const [laporan, setLaporan] = useState<any[]>([]);
 
   useEffect(() => {
-    const fetchSatgas = async () => {
-      const { data } = await supabase.from('satgas').select('*');
-      if (data) setDataSatgas(data);
-      setLoading(false);
-    };
-
-    fetchSatgas();
-
-    // Langsung pantau perubahan database secara realtime
-    const channel = supabase
-      .channel('changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'satgas' }, () => {
-        fetchSatgas();
-      })
+    fetchData();
+    const ch = supabase.channel('db-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'satgas' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'laporan' }, () => fetchData())
       .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    return () => { supabase.removeChannel(ch); };
   }, []);
 
+  async function fetchData() {
+    const { data: sData } = await supabase.from('satgas').select('*');
+    const { data: lData } = await supabase.from('laporan').select('*').order('waktu', { ascending: false }).limit(5);
+    if (sData) setSatgas(sData);
+    if (lData) setLaporan(lData);
+  }
+
+  // Kalkulasi Statistik Top Header
+  const tSatgas = satgas.length;
+  const tPersonel = satgas.reduce((acc, curr) => acc + (curr.jumlah_anggota || 0), 0);
+  const tAman = satgas.filter(s => s.status === 'AMAN').length;
+  const tSiaga = satgas.filter(s => s.status === 'SIAGA').length;
+  const tDarurat = satgas.filter(s => s.status === 'DARURAT').length;
+
+  const getStatusColor = (status: string) => {
+    switch(status) {
+      case 'AMAN': return '#10b981'; // Hijau
+      case 'SIAGA': return '#f59e0b'; // Kuning
+      case 'DARURAT': return '#ef4444'; // Merah
+      case 'PATROLI': return '#3b82f6'; // Biru
+      default: return '#64748b';
+    }
+  };
+
+  const pieData = [
+    { name: 'Aman', value: tAman, color: '#10b981' },
+    { name: 'Siaga', value: tSiaga, color: '#f59e0b' },
+    { name: 'Darurat', value: tDarurat, color: '#ef4444' }
+  ];
+
+  const dummyLineData = [{ time: '00:00', val: 10 }, { time: '06:00', val: 25 }, { time: '12:00', val: 40 }, { time: '18:00', val: 35 }, { time: '24:00', val: 50 }];
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 p-4 md:p-8">
-      {/* HEADER BAR */}
-      <header className="flex justify-between items-center border-b border-slate-800 pb-4 mb-6">
-        <div>
-          <h1 className="text-xl md:text-2xl font-black tracking-wider text-blue-500 flex items-center gap-2">
-            <Shield className="text-blue-500 animate-pulse" /> ANORAGA COMMAND CENTER
-          </h1>
-          <p className="text-xs text-slate-500 mt-1">Sistem Pemantauan Terpadu Satuan Tugas</p>
-        </div>
-        <div className="flex items-center gap-2 bg-emerald-950/80 text-emerald-400 border border-emerald-800 px-3 py-1 rounded-full text-xs font-mono">
-          <span className="w-2 h-2 bg-emerald-400 rounded-full animate-ping"></span> ONLINE
-        </div>
-      </header>
-
-      {/* LOADING STATE */}
-      {loading ? (
-        <div className="text-center py-10 text-slate-500 font-mono animate-pulse">Menghubungkan ke satelit...</div>
-      ) : (
-        <>
-          {/* STATS SUMMARY */}
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-8">
-            <div className="bg-slate-900 p-4 rounded-xl border border-slate-800">
-              <div className="text-slate-500 text-xs uppercase font-mono mb-1 flex items-center gap-1"><Users size={14}/> Total Posko</div>
-              <p className="text-2xl font-bold text-white">{dataSatgas.length}</p>
-            </div>
-            <div className="bg-rose-950/40 p-4 rounded-xl border border-rose-900/60">
-              <div className="text-rose-400 text-xs uppercase font-mono mb-1 flex items-center gap-1"><AlertTriangle size={14}/> Status Darurat</div>
-              <p className="text-2xl font-bold text-rose-400">{dataSatgas.filter(s => s.status === 'Darurat').length}</p>
-            </div>
-            <div className="bg-emerald-950/40 p-4 rounded-xl border border-emerald-900/60 col-span-2 md:col-span-1">
-              <div className="text-emerald-400 text-xs uppercase font-mono mb-1 flex items-center gap-1"><CheckCircle size={14}/> Status Aman</div>
-              <p className="text-2xl font-bold text-emerald-400">{dataSatgas.filter(s => s.status === 'Aman').length}</p>
-            </div>
+    <div className="dashboard-grid">
+      {/* SIDEBAR */}
+      <div className="sidebar">
+        <div style={{ padding: '0 20px 30px 20px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <ShieldAlert size={32} color="#f59e0b" />
+          <div>
+            <h2 style={{ fontSize: '1.2rem', color: '#fff', margin: 0 }}>ANORAGA</h2>
+            <small style={{ color: '#94a3b8' }}>COMMAND CENTER</small>
           </div>
+        </div>
+        <div className="menu-item active"><LayoutDashboard size={20}/> DASHBOARD</div>
+        <div className="menu-item"><MapIcon size={20}/> PETA OPERASI</div>
+        <div className="menu-item"><FileText size={20}/> LAPORAN TERBARU</div>
+        <div className="menu-item"><Users size={20}/> SATGAS</div>
+        <div className="menu-item"><Bell size={20}/> ALERT</div>
+        <div className="menu-item"><Radio size={20}/> BROADCAST</div>
+        <div className="menu-item" style={{ marginTop: '50px' }}><Settings size={20}/> PENGATURAN</div>
+      </div>
 
-          {/* MAIN MONITORING LIST */}
-          <div className="space-y-4">
-            <h2 className="text-sm font-mono uppercase tracking-wider text-slate-400 flex items-center gap-2">
-              <Radio size={16} className="text-blue-500 animate-broadcast" /> Log Aktivitas Posko Utama
-            </h2>
-            
-            <div className="grid gap-4 md:grid-cols-2">
-              {dataSatgas.map((satgas) => (
-                <div key={satgas.id} className="bg-slate-900 p-5 rounded-xl border border-slate-800 flex justify-between items-start hover:border-slate-700 transition-colors">
-                  <div className="space-y-1">
-                    <span className="text-xs font-mono text-slate-500">ID: ACC-00{satgas.id}</span>
-                    <h3 className="font-bold text-lg text-slate-100">{satgas.nama_satgas}</h3>
-                    <p className="text-xs text-slate-400">Pimpinan: <span className="text-slate-300 font-medium">{satgas.pimpinan}</span></p>
-                    <p className="text-xs text-slate-400">Kekuatan Personel: <span className="text-slate-300 font-medium">{satgas.jumlah_anggota} Anggota</span></p>
-                    <div className="pt-2 flex items-center gap-1 text-xs text-blue-400">
-                      <MapPin size={12} /> <span>{satgas.lokasi_nama}</span>
-                    </div>
+      {/* HEADER TRAY */}
+      <div className="header">
+        <div style={{ display: 'flex', gap: '20px' }}>
+          <div className="stat-box">
+            <small style={{ color: '#64748b', fontWeight: 'bold' }}>TOTAL SATGAS</small>
+            <div style={{ fontSize: '1.8rem', color: '#3b82f6', fontWeight: 'bold' }}>{tSatgas} <span style={{fontSize:'1rem', color:'#64748b', fontWeight:'normal'}}>Aktif</span></div>
+          </div>
+          <div className="stat-box">
+            <small style={{ color: '#64748b', fontWeight: 'bold' }}>TOTAL PERSONEL</small>
+            <div style={{ fontSize: '1.8rem', color: '#10b981', fontWeight: 'bold' }}>{tPersonel} <span style={{fontSize:'1rem', color:'#64748b', fontWeight:'normal'}}>Orang</span></div>
+          </div>
+          <div className="stat-box">
+            <small style={{ color: '#64748b', fontWeight: 'bold' }}>KONDISI AMAN</small>
+            <div style={{ fontSize: '1.8rem', color: '#10b981', fontWeight: 'bold' }}>{tAman}</div>
+          </div>
+          <div className="stat-box">
+            <small style={{ color: '#64748b', fontWeight: 'bold' }}>KONDISI DARURAT</small>
+            <div style={{ fontSize: '1.8rem', color: '#ef4444', fontWeight: 'bold' }}>{tDarurat}</div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontWeight: 'bold' }}>{new Date().toLocaleTimeString()} WIB</div>
+            <small style={{ color: '#64748b' }}>Operator Pusat</small>
+          </div>
+          <div style={{ width: '40px', height: '40px', backgroundColor: '#3b82f6', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff' }}>OP</div>
+        </div>
+      </div>
+
+      {/* MAIN CONTENT AREA */}
+      <div className="main-content">
+        
+        {/* MAP SECTION */}
+        <div className="map-section">
+          <MapContainer center={[-6.8, 107.1]} zoom={9} style={{ height: '100%', minHeight: '450px' }}>
+            <TileLayer url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png" />
+            {satgas.map((s) => (
+              <Marker key={s.id} position={[s.lat || -6.2, s.lng || 106.8]}>
+                <Popup>
+                  <div style={{ minWidth: '200px' }}>
+                    <h3 style={{ margin: '0 0 10px 0', borderBottom: '1px solid #ccc', paddingBottom: '5px' }}>
+                      {s.nama} <span className="badge" style={{ backgroundColor: getStatusColor(s.status), color: '#fff', float: 'right' }}>{s.status}</span>
+                    </h3>
+                    <p style={{ margin: '5px 0' }}><strong>Pimpinan:</strong> {s.pimpinan}</p>
+                    <p style={{ margin: '5px 0' }}><strong>Kegiatan:</strong> {s.kegiatan}</p>
+                    <p style={{ margin: '5px 0' }}><strong>Lokasi:</strong> {s.lokasi_teks}</p>
                   </div>
-                  
-                  <span className={`px-3 py-1 rounded-md text-xs font-bold tracking-wider font-mono ${
-                    satgas.status === 'Darurat' ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' :
-                    satgas.status === 'Siaga' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 
-                    'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                  }`}>
-                    {satgas.status.toUpperCase()}
-                  </span>
+                </Popup>
+              </Marker>
+            ))}
+          </MapContainer>
+        </div>
+
+        {/* RIGHT PANEL (LAPORAN & CHART) */}
+        <div className="right-panel">
+          <div className="card-dark">
+            <h3 style={{ borderBottom: '1px solid #334155', paddingBottom: '10px', marginBottom: '10px' }}>LAPORAN TERBARU</h3>
+            {laporan.map((l) => (
+              <div key={l.id} style={{ display: 'flex', gap: '10px', marginBottom: '15px', borderBottom: '1px solid #334155', paddingBottom: '10px' }}>
+                <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getStatusColor(l.status), marginTop: '5px' }}></div>
+                <div style={{ flex: 1 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <strong>{l.nama_satgas}</strong>
+                    <span className="badge" style={{ backgroundColor: getStatusColor(l.status) }}>{l.status}</span>
+                  </div>
+                  <p style={{ margin: '5px 0 0 0', fontSize: '0.85rem', color: '#cbd5e1' }}>{l.pesan}</p>
                 </div>
-              ))}
+              </div>
+            ))}
+          </div>
+
+          <div className="card-dark" style={{ flex: 1 }}>
+            <h3 style={{ borderBottom: '1px solid #334155', paddingBottom: '10px' }}>STATISTIK KEADAAN</h3>
+            <div style={{ height: '200px', marginTop: '10px' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={pieData} innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value">
+                    {pieData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
             </div>
           </div>
-        </>
-      )}
+        </div>
+
+        {/* BOTTOM PANEL */}
+        <div className="bottom-panel">
+          <div className="card-dark" style={{ gridColumn: '1 / 3' }}>
+            <h3 style={{ marginBottom: '15px' }}>GRAFIK AKTIVITAS (24 Jam)</h3>
+            <div style={{ height: '150px' }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={dummyLineData}>
+                  <XAxis dataKey="time" stroke="#94a3b8" fontSize={12} />
+                  <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: 'none' }} />
+                  <Line type="monotone" dataKey="val" stroke="#3b82f6" strokeWidth={3} dot={{ fill: '#3b82f6', r: 4 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          <div className="card-dark">
+            <h3 style={{ marginBottom: '15px' }}>ZONA OPERASI</h3>
+            <ul style={{ listStyle: 'none', padding: 0, margin: 0, color: '#cbd5e1', lineHeight: '2' }}>
+              <li>🔵 Zona Utara (Aktif)</li>
+              <li>🟢 Zona Tengah (Aman)</li>
+              <li>🔴 Zona Selatan (Rawan)</li>
+              <li>🟡 Zona Barat (Siaga)</li>
+            </ul>
+          </div>
+          <div className="card-dark" style={{ textAlign: 'center' }}>
+            <h3 style={{ marginBottom: '15px', textAlign: 'left' }}>CUACA SAAT INI</h3>
+            <div style={{ fontSize: '3rem', fontWeight: 'bold' }}>24°C</div>
+            <p style={{ color: '#94a3b8', margin: '5px 0' }}>Hujan Ringan</p>
+            <p style={{ color: '#cbd5e1', fontSize: '0.9rem' }}>Cianjur, Jawa Barat</p>
+          </div>
+        </div>
+
+      </div>
     </div>
   );
 }
